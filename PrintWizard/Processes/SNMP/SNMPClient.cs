@@ -1,102 +1,1207 @@
-﻿using CSharpFunctionalExtensions;
-using SnmpSharpNet;
+﻿using SnmpSharpNet;
 using System;
+using System.Collections.Generic;
 using System.Net;
+using System.Net.Sockets;
 
 namespace PrintWizard.Processes.SNMP
 {
+    /// <summary>
+    /// Utility class to enable simplified access to SNMP version 1 and version 2 requests and replies.
+    /// </summary>
+    /// <remarks>
+    /// Use this class if you are not looking for "deep" SNMP functionality. Design of the class is based
+    /// around providing simplest possible access to SNMP operations without getting stack into details.
+    /// 
+    /// If you are using the simplest way, you will leave SuppressExceptions flag to true and get all errors causing methods to return "null" result
+    /// which will not tell you why operation failed. You can change the SuppressExceptions flag to false and catch any and all
+    /// exception throwing errors.
+    /// 
+    /// </remarks>
     public class SNMPClient
     {
-        private readonly string _host;
-        private readonly string _community;
-        private readonly int _port;
-        private readonly int _timeout;
-        private readonly int _retries;
+        /// <summary>
+        /// SNMP Agents IP address
+        /// </summary>
+        protected IPAddress _peerIP;
 
         /// <summary>
-        /// SNMPClient class constructor
+        /// SNMP Agents name
         /// </summary>
-        /// <param name=“host”>IP address or equipment host</param>
-        /// <param name=“community”>SNMP community string</param>
-        /// <param name=“port”>SNMP port (default 161)</param>
-        /// <param name=“timeout”>Query timeout (in milliseconds)</param>
-        /// <param name=“retries”>Number of retry attempts</param>
-        /// <param name="version">SNMP protocol version, do not use version 3</param>
-        public SNMPClient(string host, string community, int port = 161, int timeout = 2000, int retries = 2, SnmpVersion version = SnmpVersion.Ver2)
+        protected string _peerName;
+
+        /// <summary>
+        /// SNMP Agent UDP port number
+        /// </summary>
+        protected int _peerPort;
+
+        /// <summary>
+        /// Target class
+        /// </summary>
+        protected UdpTarget _target;
+
+        /// <summary>
+        /// Timeout value in milliseconds
+        /// </summary>
+        protected int _timeout;
+
+        /// <summary>
+        /// Maximum retry count excluding the first request
+        /// </summary>
+        protected int _retry;
+
+        /// <summary>
+        /// SNMP community name
+        /// </summary>
+        protected string _community;
+
+        /// <summary>
+        /// security name for SNMPV3 requests
+        /// </summary>
+        protected string _securityName = "";
+
+        /// <summary>
+        /// the authentication protocol used for SNMPV3
+        /// </summary>
+        protected AuthenticationDigests _authDigests = AuthenticationDigests.None;
+
+        /// <summary>
+        /// the authentication password
+        /// </summary>
+        protected string _authSecret = "";
+
+        /// <summary>
+        /// the privacy protocol used for SNMPV3
+        /// </summary>
+        protected PrivacyProtocols _privProtocols = PrivacyProtocols.None;
+
+        /// <summary>
+        /// the privacy password
+        /// </summary>
+        protected string _privSecret = "";
+
+        /// <summary>
+        /// the SNMPV3 context name
+        /// </summary>
+        protected string _contextName = "";
+
+        /// <summary>
+        /// the SNMPV3 secure parameters
+        /// </summary>
+        private SecureAgentParameters _secparam;
+
+        /// <summary>
+        /// Non repeaters value used in SNMP GET-BULK requests
+        /// </summary>
+        protected int _nonRepeaters = 0;
+
+        /// <summary>
+        /// Maximum repetitions value used in SNMP GET-BULK requests
+        /// </summary>
+        protected int _maxRepetitions = 50;
+
+        /// <summary>
+        /// Flag determines if exceptions are suppressed or thrown. When exceptions are suppressed, methods
+        /// return null on errors regardless of what the error is.
+        /// </summary>
+        protected bool _suppressExceptions = false;
+
+        #region Properties
+
+        /// <summary>
+        /// Get/Set peer IP address
+        /// </summary>
+        public IPAddress PeerIP
         {
-            _host = host;
+            get { return _peerIP; }
+            set { _peerIP = value; }
+        }
+
+        /// <summary>
+        /// Get/Set peer name
+        /// </summary>
+        public string PeerName
+        {
+            get { return _peerName; }
+            set
+            {
+                _peerName = value;
+                Resolve();
+            }
+        }
+
+        /// <summary>
+        /// Get/Set peer port number
+        /// </summary>
+        public int PeerPort
+        {
+            get { return _peerPort; }
+            set { _peerPort = value; }
+        }
+
+        /// <summary>
+        /// Get set timeout value in milliseconds
+        /// </summary>
+        public int Timeout
+        {
+            get { return _timeout; }
+            set { _timeout = value; }
+        }
+
+        /// <summary>
+        /// Get/Set maximum retry count
+        /// </summary>
+        public int Retry
+        {
+            get { return _retry; }
+            set { _retry = value; }
+        }
+
+        /// <summary>
+        /// Get/Set SNMP community name
+        /// </summary>
+        public string Community
+        {
+            get { return _community; }
+            set { _community = value; }
+        }
+
+        /// <summary>
+        /// Get/Set NonRepeaters value
+        /// </summary>
+        /// <remarks>NonRepeaters value will only be used by SNMPv2 GET-BULK requests. Any other
+        /// request type will ignore this value.</remarks>
+        public int NonRepeaters
+        {
+            get { return _nonRepeaters; }
+            set { _nonRepeaters = value; }
+        }
+
+        /// <summary>
+        /// Get/Set MaxRepetitions value
+        /// </summary>
+        /// <remarks>MaxRepetitions value will only be used by SNMPv2 GET-BULK requests. Any other
+        /// request type will ignore this value.</remarks>
+        public int MaxRepetitions
+        {
+            get { return _maxRepetitions; }
+            set { _maxRepetitions = value; }
+        }
+
+        #endregion
+
+        /// <summary>Constructor.</summary>
+        /// <remarks>
+        /// Class is initialized to default values. Peer IP address is set to loopback, peer port number
+        /// to 161, timeout to 2000 ms (2 seconds), retry count to 2 and community name to public.
+        /// </remarks>
+        public SNMPClient()
+        {
+            _peerIP = IPAddress.Loopback;
+            _peerPort = 161;
+            _timeout = 2000;
+            _retry = 2;
+            _community = "public";
+            _target = null;
+            _peerName = "localhost";
+        }
+
+        /// <summary>
+        /// Constructor.
+        /// </summary>
+        /// <remarks>
+        /// Class is initialized with default values with the agent name set to the supplied DNS name (or 
+        /// IP address). If peer name is a DNS name, DNS resolution will take place in the constructor attempting
+        /// to resolve it an IP address.
+        /// </remarks>
+        /// <param name="peerName">Peer name or IP address</param>
+        public SNMPClient(string peerName)
+            : this()
+        {
+            _peerName = peerName;
+            Resolve();
+        }
+
+        /// <summary>
+        /// Constructor.
+        /// </summary>
+        /// <param name="peerName">Peer name or IP address</param>
+        /// <param name="peerPort">Peer UDP port number</param>
+        public SNMPClient(string peerName, int peerPort)
+            : this(peerName)
+        {
+            _peerPort = peerPort;
+        }
+
+        /// <summary>
+        /// Constructor
+        /// </summary>
+        /// <param name="peerName">Peer name or IP address</param>
+        /// <param name="community">SNMP community name</param>
+        public SNMPClient(string peerName, string community)
+            : this(peerName)
+        {
             _community = community;
-            _port = port;
+        }
+
+        /// <summary>
+        /// Constructor.
+        /// </summary>
+        /// <param name="peerName">Peer name or IP address</param>
+        /// <param name="peerPort">Peer UDP port number</param>
+        /// <param name="community">SNMP community name</param>
+        public SNMPClient(string peerName, int peerPort, string community)
+            : this(peerName, community)
+        {
+            _peerPort = peerPort;
+        }
+
+        /// <summary>
+        /// Constructor.
+        /// </summary>
+        /// <param name="peerName">Peer name or IP address</param>
+        /// <param name="peerPort">Peer UDP port number</param>
+        /// <param name="community">SNMP community name</param>
+        /// <param name="timeout">SNMP request timeout</param>
+        /// <param name="retry">Maximum number of retries excluding the first request (0 = 1 request is sent)</param>
+        public SNMPClient(string peerName, int peerPort, string community, int timeout, int retry)
+            : this(peerName, peerPort, community)
+        {
             _timeout = timeout;
-            _retries = retries;
+            _retry = retry;
         }
 
+        /// <summary>
+        /// Constructor.
+        /// </summary>
+        /// <param name="peerName">Peer name or IP address</param>
+        /// <param name="securityName">security name for SNMPV3 requests</param>
+        /// <param name="authDigests">the authentication protocol used for SNMPV3</param>
+        /// <param name="authSecret">the authentication password</param>
+        /// <param name="privProtocols">the privacy protocol used for SNMPV3</param>
+        /// <param name="privSecret">the privacy password</param>
+        /// <param name="contextName">the SNMPV3 context name</param>
+        public SNMPClient(string peerName, string securityName, AuthenticationDigests authDigests,
+            string authSecret, PrivacyProtocols privProtocols, string privSecret, string contextName)
+            : this(peerName)
+        {
+            _securityName = securityName;
+            _authDigests = authDigests;
+            _authSecret = authSecret;
+            _privProtocols = privProtocols;
+            _privSecret = privSecret;
+            _contextName = contextName;
+        }
 
         /// <summary>
-        /// Querying the OID value using SNMP GET
+        /// Constructor.
         /// </summary>
-        /// <param name=“oid”>OID to retrieve value</param>
-        /// <returns>Result as a string or null in case of error</returns>
-        public Result<string> Get(string oid)
+        /// <param name="peerName">Peer name or IP address</param>
+        /// <param name="peerPort">Peer UDP port number</param>
+        /// <param name="securityName">security name for SNMPV3 requests</param>
+        /// <param name="authDigests">the authentication protocol used for SNMPV3</param>
+        /// <param name="authSecret">the authentication password</param>
+        /// <param name="privProtocols">the privacy protocol used for SNMPV3</param>
+        /// <param name="privSecret">the privacy password</param>
+        /// <param name="contextName">the SNMPV3 context name</param>
+        public SNMPClient(string peerName, int peerPort, string securityName, AuthenticationDigests authDigests,
+            string authSecret, PrivacyProtocols privProtocols, string privSecret, string contextName)
+            : this(peerName, peerPort)
         {
+            _securityName = securityName;
+            _authDigests = authDigests;
+            _authSecret = authSecret;
+            _privProtocols = privProtocols;
+            _privSecret = privSecret;
+            _contextName = contextName;
+        }
+
+        /// <summary>Class validity flag</summary>
+        /// <remarks>
+        /// Return class validity status. If class is valid, it is ready to send requests and receive
+        /// replies. If false, requests to send requests will fail.
+        /// </remarks>
+        public bool Valid
+        {
+            get
+            {
+                if (_peerIP.Equals(IPAddress.None) || _peerIP.Equals(IPAddress.Any))
+                {
+                    return false;
+                }
+
+                if (_community.Length < 1 || _community.Length > 50)
+                {
+                    return false;
+                }
+
+                return true;
+            }
+        }
+
+        private SecureAgentParameters DiscoverSecureAgentParameters()
+        {
+            if (_secparam != null)
+                return _secparam;
+
+            _secparam = new SecureAgentParameters();
+            if (!_target.Discovery(_secparam))
+            {
+                _secparam = null;
+                _target.Close();
+                _target = null;
+
+                return null;
+            }
+
+            if (_authDigests == AuthenticationDigests.None && _privProtocols == PrivacyProtocols.None)
+            {
+                _secparam.noAuthNoPriv(_securityName);
+            }
+            else if (_privProtocols == PrivacyProtocols.None)
+            {
+                _secparam.authNoPriv(_securityName, _authDigests, _authSecret);
+            }
+            else
+            {
+                _secparam.authPriv(_securityName, _authDigests, _authSecret, _privProtocols, _privSecret);
+            }
+
+            _secparam.ContextName.Set(_contextName);
+
+            return _secparam;
+        }
+
+        /// <summary>
+        /// SNMP GET request
+        /// </summary>
+        /// <param name="version">SNMP protocol version.</param>
+        /// <param name="pdu">Request Protocol Data Unit</param>
+        /// <returns>Result of the SNMP request in a dictionary format with Oid => AsnType values</returns>
+        public Dictionary<Oid, AsnType> Get(SnmpVersion version, Pdu pdu)
+        {
+            if (!Valid)
+            {
+                if (!_suppressExceptions)
+                {
+                    throw new SnmpException("SimpleSnmp class is not valid.");
+                }
+
+                return null; // class is not fully initialized.
+            }
+
             try
             {
-                UdpTarget target = new UdpTarget(new IPAddress(IPAddress.Parse(_host).GetAddressBytes()), _port, _timeout, _retries);
-
-                Pdu pdu = new Pdu(PduType.Get);
-                pdu.VbList.Add(oid);
-
-                AgentParameters parameters = new AgentParameters(SnmpVersion.Ver2, new OctetString(_community));
-
-                SnmpV2Packet response = target.Request(pdu, parameters) as SnmpV2Packet;
-
-                if (response != null && response.Pdu.ErrorStatus == 0)
+                _target = new UdpTarget(_peerIP, _peerPort, _timeout, _retry);
+            }
+            catch (Exception ex)
+            {
+                _target = null;
+                if (!_suppressExceptions)
                 {
-                    return response.Pdu.VbList[0].Value.ToString();
+                    throw ex;
+                }
+            }
+
+            if (_target == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                IAgentParameters param;
+                if (version == SnmpVersion.Ver3)
+                {
+                    param = DiscoverSecureAgentParameters();
+                    if (param == null)
+                    {
+                        if (!_suppressExceptions)
+                        {
+                            throw new SnmpException("SNMP version 3 discovery failed.");
+                        }
+
+                        return null;
+                    }
                 }
                 else
                 {
-                    return Result.Failure<string>($"SNMP Error: ErrorStatus: {response?.Pdu.ErrorStatus}, ErrorIndex: {response?.Pdu.ErrorIndex})");
+                    param = new AgentParameters(version, new OctetString(_community));
+                }
+
+                SnmpPacket result = _target.Request(pdu, param);
+                if (version == SnmpVersion.Ver3 && result != null && result.Pdu.Type == PduType.Report)
+                {
+                    if (result.Pdu.VbList[0].Oid.Equals(SnmpConstants.usmStatsNotInTimeWindows))
+                    {
+                        result = _target.Request(pdu, _secparam);
+                    }
+                }
+
+                if (result != null)
+                {
+                    if (result.Pdu.ErrorStatus == 0)
+                    {
+                        Dictionary<Oid, AsnType> res = new Dictionary<Oid, AsnType>();
+                        foreach (Vb v in result.Pdu.VbList)
+                        {
+                            if ((version == SnmpVersion.Ver2 || version == SnmpVersion.Ver3) &&
+                                (v.Value.Type == SnmpConstants.SMI_NOSUCHINSTANCE ||
+                                 v.Value.Type == SnmpConstants.SMI_NOSUCHOBJECT))
+                            {
+                                if (!res.ContainsKey(v.Oid))
+                                {
+                                    res.Add(v.Oid, new Null());
+                                }
+                                else
+                                {
+                                    res.Add(Oid.NullOid(), v.Value);
+                                }
+                            }
+                            else
+                            {
+                                if (!res.ContainsKey(v.Oid))
+                                {
+                                    res.Add(v.Oid, v.Value);
+                                }
+                                else
+                                {
+                                    if (res[v.Oid].Type == v.Value.Type)
+                                    {
+                                        res[v.Oid] = v.Value; // update value of the existing Oid entry
+                                    }
+                                    else
+                                    {
+                                        throw new SnmpException(SnmpException.OidValueTypeChanged,
+                                            String.Format("Value type changed from {0} to {1}", res[v.Oid].Type,
+                                                v.Value.Type));
+                                    }
+                                }
+                            }
+                        }
+
+                        _target.Close();
+                        _target = null;
+                        return res;
+                    }
+
+                    if (!_suppressExceptions)
+                    {
+                        throw new SnmpErrorStatusException("Agent responded with an error", result.Pdu.ErrorStatus,
+                            result.Pdu.ErrorIndex);
+                    }
                 }
             }
             catch (Exception ex)
             {
-                return Result.Failure<string>($"Exception in SNMP Get: {ex.Message}");
+                if (!_suppressExceptions)
+                {
+                    _target.Close();
+                    _target = null;
+                    throw ex;
+                }
             }
+
+            _target.Close();
+            _target = null;
+            return null;
         }
 
         /// <summary>
-        /// Setting the OID value using SNMP SET
+        /// SNMP GET request
         /// </summary>
-        /// <param name=“oid”>OID to set value</param>
-        /// <param name=“value”>Value to set</param>
-        /// <returns>True if the request is successful, otherwise False</returns>
-        public UnitResult<string> Set(string oid, string value)
+        /// <param name="version">SNMP protocol version number.</param>
+        /// <param name="oidList">List of request OIDs in string dotted decimal format.</param>
+        /// <returns>Result of the SNMP request in a dictionary format with Oid => AsnType values</returns>
+        public Dictionary<Oid, AsnType> Get(SnmpVersion version, string[] oidList)
         {
+            if (!Valid)
+            {
+                if (!_suppressExceptions)
+                {
+                    throw new SnmpException("SimpleSnmp class is not valid.");
+                }
+
+                return null;
+            }
+
+            Pdu pdu = new Pdu(PduType.Get);
+            foreach (string s in oidList)
+            {
+                pdu.VbList.Add(s);
+            }
+
+            return Get(version, pdu);
+        }
+
+        /// <summary>
+        /// SNMP GET request
+        /// </summary>
+        /// <param name="version">SNMP protocol version number.</param>
+        /// <param name="oidList">List of request OIDs in string dotted decimal format.</param>
+        /// <returns>Result of the SNMP request in a dictionary format with Oid => AsnType values</returns>
+        public Dictionary<Oid, AsnType> Get(SnmpVersion version, string oid)
+        {
+            if (!Valid)
+            {
+                if (!_suppressExceptions)
+                {
+                    throw new SnmpException("SimpleSnmp class is not valid.");
+                }
+
+                return null;
+            }
+
+            Pdu pdu = new Pdu(PduType.Get);
+            pdu.VbList.Add(oid);
+
+            return Get(version, pdu);
+        }
+
+        /// <summary>
+        /// SNMP GET-NEXT request
+        /// </summary>
+        /// <param name="version">SNMP protocol version.</param>
+        /// <param name="pdu">Request Protocol Data Unit</param>
+        /// <returns>Result of the SNMP request in a dictionary format with Oid => AsnType values</returns>
+        public Dictionary<Oid, AsnType> GetNext(SnmpVersion version, Pdu pdu)
+        {
+            if (!Valid)
+            {
+                if (!_suppressExceptions)
+                {
+                    throw new SnmpException("SimpleSnmp class is not valid.");
+                }
+
+                return null; // class is not fully initialized.
+            }
+
             try
             {
-                UdpTarget target = new UdpTarget(new IPAddress(IPAddress.Parse(_host).GetAddressBytes()), _port, _timeout, _retries);
+                _target = new UdpTarget(_peerIP, _peerPort, _timeout, _retry);
+            }
+            catch
+            {
+                _target = null;
+            }
 
-                Pdu pdu = new Pdu(PduType.Set);
-                pdu.VbList.Add(new Vb(new Oid(oid), new OctetString(value)));
+            if (_target == null)
+            {
+                return null;
+            }
 
-                AgentParameters parameters = new AgentParameters(SnmpVersion.Ver2, new OctetString(_community));
-
-                SnmpV2Packet response = target.Request(pdu, parameters) as SnmpV2Packet;
-
-                if (response != null && response.Pdu.ErrorStatus == 0)
+            try
+            {
+                IAgentParameters param;
+                if (version == SnmpVersion.Ver3)
                 {
-                    return Result.Success();
+                    param = DiscoverSecureAgentParameters();
+                    if (param == null)
+                    {
+                        if (!_suppressExceptions)
+                        {
+                            throw new SnmpException("SNMP version 3 discovery failed.");
+                        }
+
+                        return null;
+                    }
                 }
                 else
                 {
-                    return Result.Failure($"SNMP Error: ErrorStatus: {response?.Pdu.ErrorStatus}, ErrorIndex: {response?.Pdu.ErrorIndex})");
+                    param = new AgentParameters(version, new OctetString(_community));
+                }
+
+                SnmpPacket result = _target.Request(pdu, param);
+                if (version == SnmpVersion.Ver3 && result != null && result.Pdu.Type == PduType.Report)
+                {
+                    if (result.Pdu.VbList[0].Oid.Equals(SnmpConstants.usmStatsNotInTimeWindows))
+                    {
+                        result = _target.Request(pdu, _secparam);
+                    }
+                }
+
+                if (result != null)
+                {
+                    if (result.Pdu.ErrorStatus == 0)
+                    {
+                        Dictionary<Oid, AsnType> res = new Dictionary<Oid, AsnType>();
+                        foreach (Vb v in result.Pdu.VbList)
+                        {
+                            if ((version == SnmpVersion.Ver2 || version == SnmpVersion.Ver3) &&
+                                (v.Value.Type == SnmpConstants.SMI_ENDOFMIBVIEW) ||
+                                (v.Value.Type == SnmpConstants.SMI_NOSUCHINSTANCE) ||
+                                (v.Value.Type == SnmpConstants.SMI_NOSUCHOBJECT))
+                            {
+                                break;
+                            }
+
+                            if (res.ContainsKey(v.Oid))
+                            {
+                                if (res[v.Oid].Type != v.Value.Type)
+                                {
+                                    throw new SnmpException(SnmpException.OidValueTypeChanged,
+                                        "OID value type changed for OID: " + v.Oid.ToString());
+                                }
+                                else
+                                {
+                                    res[v.Oid] = v.Value;
+                                }
+                            }
+                            else
+                            {
+                                res.Add(v.Oid, v.Value);
+                            }
+                        }
+
+                        _target.Close();
+                        _target = null;
+                        return res;
+                    }
+
+                    if (!_suppressExceptions)
+                    {
+                        throw new SnmpErrorStatusException("Agent responded with an error", result.Pdu.ErrorStatus,
+                            result.Pdu.ErrorIndex);
+                    }
                 }
             }
             catch (Exception ex)
             {
-                return Result.Failure($"Exception in SNMP Set: {ex.Message}");
+                if (!_suppressExceptions)
+                {
+                    _target.Close();
+                    _target = null;
+                    throw ex;
+                }
             }
+
+            _target.Close();
+            _target = null;
+            return null;
         }
+
+        /// <summary>
+        /// SNMP GET-NEXT request
+        /// </summary>
+        /// <param name="version">SNMP protocol version number.</param>
+        /// <param name="oidList">List of request OIDs in string dotted decimal format.</param>
+        /// <returns>Result of the SNMP request in a dictionary format with Oid => AsnType values</returns>
+        public Dictionary<Oid, AsnType> GetNext(SnmpVersion version, string[] oidList)
+        {
+            if (!Valid)
+            {
+                if (!_suppressExceptions)
+                {
+                    throw new SnmpException("SimpleSnmp class is not valid.");
+                }
+
+                return null;
+            }
+
+            Pdu pdu = new Pdu(PduType.GetNext);
+            foreach (string s in oidList)
+            {
+                pdu.VbList.Add(s);
+            }
+
+            return GetNext(version, pdu);
+        }
+
+        /// <summary>
+        /// SNMP GET-BULK request
+        /// </summary>
+        /// <remarks>
+        /// GetBulk request type is only available with SNMP v2c and SNMP v3 agents.
+        /// 
+        /// GetBulk method will return a dictionary of Oid to value mapped values as returned form a
+        /// single GetBulk request to the agent. You can change how the request itself is made by changing the
+        /// SimpleSnmp.NonRepeaters and SimpleSnmp.MaxRepetitions values. SimpleSnmp properties are only used
+        /// when values in the parameter Pdu are set to 0.
+        /// </remarks>
+        /// <param name="pdu">Request Protocol Data Unit</param>
+        /// <param name="version">SNMP protocol version number.</param>
+        /// <returns>Result of the SNMP request in a dictionary format with Oid => AsnType values</returns>
+        public Dictionary<Oid, AsnType> GetBulk(Pdu pdu, SnmpVersion version = SnmpVersion.Ver2)
+        {
+            if (!Valid)
+            {
+                if (!_suppressExceptions)
+                {
+                    throw new SnmpException("SimpleSnmp class is not valid.");
+                }
+
+                return null; // class is not fully initialized.
+            }
+
+            // function only works on SNMP version 2 and SNMP version 3 requests
+            if (version == SnmpVersion.Ver1)
+            {
+                if (!_suppressExceptions)
+                {
+                    throw new SnmpInvalidVersionException("GetBulk request not support SNMP version 1.");
+                }
+
+                return null;
+            }
+
+            try
+            {
+                pdu.NonRepeaters = _nonRepeaters;
+                pdu.MaxRepetitions = _maxRepetitions;
+                _target = new UdpTarget(_peerIP, _peerPort, _timeout, _retry);
+            }
+            catch (Exception ex)
+            {
+                _target = null;
+                if (!_suppressExceptions)
+                {
+                    throw ex;
+                }
+            }
+
+            if (_target == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                IAgentParameters param;
+                if (version == SnmpVersion.Ver3)
+                {
+                    param = DiscoverSecureAgentParameters();
+                    if (param == null)
+                    {
+                        if (!_suppressExceptions)
+                        {
+                            throw new SnmpException("SNMP version 3 discovery failed.");
+                        }
+
+                        return null;
+                    }
+                }
+                else
+                {
+                    param = new AgentParameters(version, new OctetString(_community));
+                }
+
+                SnmpPacket result = _target.Request(pdu, param);
+                if (version == SnmpVersion.Ver3 && result != null && result.Pdu.Type == PduType.Report)
+                {
+                    if (result.Pdu.VbList[0].Oid.Equals(SnmpConstants.usmStatsNotInTimeWindows))
+                    {
+                        result = _target.Request(pdu, _secparam);
+                    }
+                }
+
+                if (result != null)
+                {
+                    if (result.Pdu.ErrorStatus == 0)
+                    {
+                        Dictionary<Oid, AsnType> res = new Dictionary<Oid, AsnType>();
+                        foreach (Vb v in result.Pdu.VbList)
+                        {
+                            if (
+                                (v.Value.Type == SnmpConstants.SMI_ENDOFMIBVIEW) ||
+                                (v.Value.Type == SnmpConstants.SMI_NOSUCHINSTANCE) ||
+                                (v.Value.Type == SnmpConstants.SMI_NOSUCHOBJECT)
+                            )
+                            {
+                                break;
+                            }
+
+                            if (res.ContainsKey(v.Oid))
+                            {
+                                if (res[v.Oid].Type != v.Value.Type)
+                                {
+                                    throw new SnmpException(SnmpException.OidValueTypeChanged,
+                                        "OID value type changed for OID: " + v.Oid.ToString());
+                                }
+                                else
+                                {
+                                    res[v.Oid] = v.Value;
+                                }
+                            }
+                            else
+                            {
+                                res.Add(v.Oid, v.Value);
+                            }
+                        }
+
+                        _target.Close();
+                        _target = null;
+                        return res;
+                    }
+                    else
+                    {
+                        if (!_suppressExceptions)
+                        {
+                            throw new SnmpErrorStatusException("Agent responded with an error", result.Pdu.ErrorStatus,
+                                result.Pdu.ErrorIndex);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!_suppressExceptions)
+                {
+                    _target.Close();
+                    _target = null;
+                    throw ex;
+                }
+            }
+
+            _target.Close();
+            _target = null;
+            return null;
+        }
+
+        /// <summary>
+        /// SNMP GET-BULK request
+        /// </summary>
+        /// <remarks>
+        /// Performs a GetBulk SNMP v2 operation on a list of OIDs. This is a convenience function that
+        /// calls GetBulk(Pdu) method.
+        /// </remarks>
+        /// <param name="oidList">List of request OIDs in string dotted decimal format.</param>
+        /// <param name="version">SNMP protocol version number.</param>
+        /// <returns>Result of the SNMP request in a dictionary format with Oid => AsnType values</returns>
+        public Dictionary<Oid, AsnType> GetBulk(string[] oidList, SnmpVersion version = SnmpVersion.Ver2)
+        {
+            if (!Valid)
+            {
+                if (!_suppressExceptions)
+                {
+                    throw new SnmpException("SimpleSnmp class is not valid.");
+                }
+
+                return null;
+            }
+
+            Pdu pdu = new Pdu(PduType.GetBulk);
+            pdu.MaxRepetitions = _maxRepetitions;
+            pdu.NonRepeaters = _nonRepeaters;
+            foreach (string s in oidList)
+            {
+                pdu.VbList.Add(s);
+            }
+
+            return GetBulk(pdu, version);
+        }
+
+        /// <summary>
+        /// SNMP SET request
+        /// </summary>            
+        /// <param name="version">SNMP protocol version number.</param>
+        /// <param name="pdu">Request Protocol Data Unit</param>
+        /// <returns>Result of the SNMP request in a dictionary format with Oid => AsnType values</returns>
+        public Dictionary<Oid, AsnType> Set(SnmpVersion version, Pdu pdu)
+        {
+            if (!Valid)
+            {
+                if (!_suppressExceptions)
+                {
+                    throw new SnmpException("SimpleSnmp class is not valid.");
+                }
+
+                return null; // class is not fully initialized.
+            }
+
+            try
+            {
+                _target = new UdpTarget(_peerIP, _peerPort, _timeout, _retry);
+            }
+            catch (Exception ex)
+            {
+                _target = null;
+                if (!_suppressExceptions)
+                {
+                    throw ex;
+                }
+            }
+
+            if (_target == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                IAgentParameters param;
+                if (version == SnmpVersion.Ver3)
+                {
+                    param = DiscoverSecureAgentParameters();
+                    if (param == null)
+                    {
+                        if (!_suppressExceptions)
+                        {
+                            throw new SnmpException("SNMP version 3 discovery failed.");
+                        }
+
+                        return null;
+                    }
+                }
+                else
+                {
+                    param = new AgentParameters(version, new OctetString(_community));
+                }
+
+                SnmpPacket result = _target.Request(pdu, param);
+                if (version == SnmpVersion.Ver3 && result != null && result.Pdu.Type == PduType.Report)
+                {
+                    if (result.Pdu.VbList[0].Oid.Equals(SnmpConstants.usmStatsNotInTimeWindows))
+                    {
+                        result = _target.Request(pdu, _secparam);
+                    }
+                }
+
+                if (result != null)
+                {
+                    if (result.Pdu.ErrorStatus == 0)
+                    {
+                        Dictionary<Oid, AsnType> res = new Dictionary<Oid, AsnType>();
+                        foreach (Vb v in result.Pdu.VbList)
+                        {
+                            if (res.ContainsKey(v.Oid))
+                            {
+                                if (res[v.Oid].Type != v.Value.Type)
+                                {
+                                    throw new SnmpException(SnmpException.OidValueTypeChanged,
+                                        "OID value type changed for OID: " + v.Oid.ToString());
+                                }
+                                else
+                                {
+                                    res[v.Oid] = v.Value;
+                                }
+                            }
+                            else
+                            {
+                                res.Add(v.Oid, v.Value);
+                            }
+                        }
+
+                        _target.Close();
+                        _target = null;
+                        return res;
+                    }
+                    else
+                    {
+                        if (!_suppressExceptions)
+                        {
+                            throw new SnmpErrorStatusException("Agent responded with an error", result.Pdu.ErrorStatus,
+                                result.Pdu.ErrorIndex);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!_suppressExceptions)
+                {
+                    _target.Close();
+                    _target = null;
+                    throw ex;
+                }
+            }
+
+            _target.Close();
+            _target = null;
+            return null;
+        }
+
+        /// <summary>
+        /// SNMP SET request
+        /// </summary>
+        /// <param name="version">SNMP protocol version number.</param>
+        /// <param name="vbs">Vb array containing Oid/AsnValue pairs for the SET operation</param>
+        /// <returns>Result of the SNMP request in a dictionary format with Oid => AsnType values</returns>
+        public Dictionary<Oid, AsnType> Set(SnmpVersion version, Vb[] vbs)
+        {
+            if (!Valid)
+            {
+                if (!_suppressExceptions)
+                {
+                    throw new SnmpException("SimpleSnmp class is not valid.");
+                }
+
+                return null;
+            }
+
+            Pdu pdu = new Pdu(PduType.Set);
+            foreach (Vb vb in vbs)
+            {
+                pdu.VbList.Add(vb);
+            }
+
+            return Set(version, pdu);
+        }
+
+        /// <summary>SNMP WALK operation</summary>
+        /// <remarks>
+        /// When using SNMP version 1, walk is performed using GET-NEXT calls. When using SNMP version 2, 
+        /// walk is performed using GET-BULK calls.
+        /// </remarks>
+
+        /// <param name="version">SNMP protocol version.</param>
+        /// <param name="rootOid">OID to start WALK operation from. Only child OIDs of the rootOid will be
+        /// retrieved and returned</param>
+        /// <returns>Oid => AsnType value mappings on success, empty dictionary if no data was found or
+        /// null on error</returns>
+        public Dictionary<Oid, AsnType> Walk(SnmpVersion version, string rootOid)
+        {
+            if (!Valid)
+            {
+                if (!_suppressExceptions)
+                {
+                    throw new SnmpException("SimpleSnmp class is not valid.");
+                }
+
+                return null;
+            }
+
+            if (rootOid.Length < 2)
+            {
+                if (!_suppressExceptions)
+                {
+                    throw new SnmpException(SnmpException.InvalidOid, "RootOid is not a valid Oid");
+                }
+
+                return null;
+            }
+
+            Oid root = new Oid(rootOid);
+            if (root.Length <= 0)
+            {
+                return null; // unable to parse root oid
+            }
+
+            Oid lastOid = (Oid)root.Clone();
+
+            Dictionary<Oid, AsnType> result = new Dictionary<Oid, AsnType>();
+            while (lastOid != null && root.IsRootOf(lastOid))
+            {
+                Dictionary<Oid, AsnType> val = null;
+                if (version == SnmpVersion.Ver1)
+                {
+                    val = GetNext(version, new string[] { lastOid.ToString() });
+                }
+                else
+                {
+                    val = GetBulk(new string[] { lastOid.ToString() }, version);
+                }
+
+                // check that we have a result
+                if (val == null || val.Count == 0)
+                {
+                    // error of some sort happened. abort...
+                    break;
+                }
+
+                foreach (KeyValuePair<Oid, AsnType> entry in val)
+                {
+                    if (root.IsRootOf(entry.Key))
+                    {
+                        if (result.ContainsKey(entry.Key))
+                        {
+                            if (result[entry.Key].Type != entry.Value.Type)
+                            {
+                                throw new SnmpException(SnmpException.OidValueTypeChanged,
+                                    "OID value type changed for OID: " + entry.Key.ToString());
+                            }
+                            else
+                                result[entry.Key] = entry.Value;
+                        }
+                        else
+                        {
+                            result.Add(entry.Key, entry.Value);
+                        }
+
+                        lastOid = (Oid)entry.Key.Clone();
+                    }
+                    else
+                    {
+                        // it's faster to check if variable is null then checking IsRootOf
+                        lastOid = null;
+                        break;
+                    }
+                }
+            }
+
+            return result;
+        }
+
+
+
+        #region Utility functions
+
+        /// <summary>
+        /// Resolve peer name to an IP address
+        /// </summary>
+        /// <remarks>
+        /// This method will not throw any exceptions, even on failed DNS resolution. Make
+        /// sure you call SimpleSnmp.Valid property to verify class state.
+        /// </remarks>
+        /// <returns>true if DNS resolution is successful, otherwise false</returns>
+        internal bool Resolve()
+        {
+            _peerIP = IPAddress.None;
+            if (_peerName.Length > 0)
+            {
+                if (IPAddress.TryParse(_peerName, out _peerIP))
+                {
+                    return true;
+                }
+                else
+                {
+                    _peerIP = IPAddress.None; // just in case
+                }
+
+                IPHostEntry he = null;
+                try
+                {
+                    he = Dns.GetHostEntry(_peerName);
+                }
+                catch (Exception ex)
+                {
+                    if (!_suppressExceptions)
+                    {
+                        throw ex;
+                    }
+
+                    he = null;
+                }
+
+                if (he == null)
+                    return false; // resolution failed
+                foreach (IPAddress tmp in he.AddressList)
+                {
+                    if (tmp.AddressFamily == AddressFamily.InterNetwork)
+                    {
+                        _peerIP = tmp;
+                        break;
+                    }
+                }
+
+                if (_peerIP != IPAddress.None)
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Get/Set exception suppression flag.
+        /// 
+        /// If exceptions are suppressed all methods return null on any and all errors. With suppression disabled, you can
+        /// capture error details in try/catch blocks around method calls.
+        /// </summary>
+        public bool SuppressExceptions
+        {
+            get { return _suppressExceptions; }
+            set { _suppressExceptions = value; }
+        }
+
+        #endregion
     }
 }

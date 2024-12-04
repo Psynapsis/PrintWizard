@@ -1,8 +1,10 @@
 ﻿using Avalonia.Controls;
 using DynamicData.Binding;
 using FluentAvalonia.UI.Controls;
+using Microsoft.Extensions.DependencyInjection;
 using PrintWizard.Model;
 using ReactiveUI;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -34,10 +36,13 @@ namespace PrintWizard.ViewModels
 
         public ICommand SelectionChangeCommand;
 
-        public MainWindowsViewModel()
+        public MainWindowsViewModel(IServiceProvider serviceProvider)
         {
-            PanelItems.Add(new NavigatePanelItemBase { Name = "SNMP", Icon = Symbol.Play, Tag = "SNMP", ToolTip = "Polling the printer via SNMP flow", ViewUserControl = new SNMPView() });
-            PanelItems.Add(new NavigatePanelItemBase { Name = "IPP", Icon = Symbol.Print, Tag = "IPP", ToolTip = "Printing and polling via IPP protocol", ViewUserControl = new IPPView() });
+            var snmpViewModel = serviceProvider.GetRequiredService<SNMPViewModel>();
+            var ippViewModel = serviceProvider.GetRequiredService<IPPViewModel>();
+
+            PanelItems.Add(new NavigatePanelItemBase { Name = "SNMP", Icon = Symbol.Play, Tag = "SNMP", ToolTip = "Polling the printer via SNMP flow", ViewUserControl = new SNMPView { DataContext = snmpViewModel } });
+            PanelItems.Add(new NavigatePanelItemBase { Name = "IPP", Icon = Symbol.Print, Tag = "IPP", ToolTip = "Printing and polling via IPP protocol", ViewUserControl = new IPPView { DataContext = ippViewModel } });
             this.RaisePropertyChanged(nameof(PanelItems));
 
             CurrentPage = PanelItems.FirstOrDefault().ViewUserControl;

@@ -1,6 +1,7 @@
 ﻿using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PrintWizard.ViewModels;
 using PrintWizard.Views;
@@ -18,6 +19,14 @@ public partial class App : Application
     {
         var collection = new ServiceCollection();
 
+        IConfiguration config = new ConfigurationBuilder()
+            .AddJsonFile("appsettings.json")
+            .Build();
+
+        collection.AddSingleton<IConfiguration>(config);
+        collection.AddSingleton<SNMPViewModel>();
+        collection.AddSingleton<IPPViewModel>();
+        collection.AddSingleton<MainWindowsViewModel>();
 
         var services = collection.BuildServiceProvider();
 
@@ -25,7 +34,7 @@ public partial class App : Application
         {
             desktop.MainWindow = new MainWindow
             {
-                DataContext = new MainWindowsViewModel()
+                DataContext = services.GetRequiredService<MainWindowsViewModel>()
             };
         }
 
