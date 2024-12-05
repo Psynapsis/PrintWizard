@@ -14,5 +14,31 @@
         <vm:IPPViewModel />
     </Design.DataContext>
 
+    <Grid ColumnDefinitions="auto,*">
+        <Grid Grid.Row="0">
+            <StackPanel Orientation="Vertical">
+                <StackPanel Margin="5" Orientation="Horizontal">
+                    <TextBox
+                        Width="300"
+                        Margin="0,0,5,0"
+                        Text="{Binding FilePath}"
+                        Watermark="Path to file" />
+                    <Button Content="Select file" />
+                </StackPanel>
+                <StackPanel Margin="5" Orientation="Horizontal">
+                    <TextBox
+                        Width="100"
+                        Margin="0,0,5,0"
+                        IsEnabled="{Binding ElementName=EnablePinCheck, Path=IsChecked}"
+                        Text="{Binding PinCode}"
+                        Watermark="Enter PIN" />
+                    <CheckBox x:Name="EnablePinCheck" IsChecked="" />
+                    <Button Command="{Binding PrintCommand}" Content="Printing" />
+                    <Button Command="{Binding GetAttributeCommand}" Content="Printing" />
+                </StackPanel>
+            </StackPanel>
+        </Grid>
+        <Grid Grid.Row="1" />
+    </Grid>
 
 </UserControl>
