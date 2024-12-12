@@ -1,4 +1,5 @@
 ﻿using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Microsoft.Extensions.Configuration;
@@ -10,6 +11,8 @@ namespace PrintWizard;
 
 public partial class App : Application
 {
+    public static TopLevel TopLevel { get; private set; }
+
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
@@ -23,7 +26,9 @@ public partial class App : Application
             .AddJsonFile("appsettings.json")
             .Build();
 
+        var mainWindows = new MainWindow();
         collection.AddSingleton<IConfiguration>(config);
+        collection.AddSingleton<TopLevel>(TopLevel = TopLevel.GetTopLevel(mainWindows));
         collection.AddSingleton<SNMPViewModel>();
         collection.AddSingleton<IPPViewModel>();
         collection.AddSingleton<MainWindowsViewModel>();
@@ -32,10 +37,8 @@ public partial class App : Application
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.MainWindow = new MainWindow
-            {
-                DataContext = services.GetRequiredService<MainWindowsViewModel>()
-            };
+            mainWindows.DataContext = services.GetRequiredService<MainWindowsViewModel>();
+            desktop.MainWindow = mainWindows;
         }
 
         base.OnFrameworkInitializationCompleted();

@@ -5,8 +5,11 @@ using SharpIpp.Protocol.Models;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+
 namespace PrintWizard.Processes.IPP
 {
     public class IPPClient : IDisposable
@@ -14,21 +17,38 @@ namespace PrintWizard.Processes.IPP
         private readonly SharpIppClient _ippClient;
         private readonly Uri _printerUri;
         private readonly string _requestingUserName;
+        private readonly string _password;
 
         public SharpIppClient SharpIppClient => _ippClient;
 
-        public IPPClient(string printerUri, string requestingUserName)
+        public IPPClient(string printerUri)
         {
             _printerUri = new Uri(printerUri);
-            _ippClient = new SharpIppClient();
-            _requestingUserName = requestingUserName;
+
+            var handler = new HttpClientHandler
+            {
+                SslProtocols = System.Security.Authentication.SslProtocols.Tls13, 
+                ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true, // Принудительное принятие всех сертификатов (небезопасно для продакшн-среды)
+            };
+
+            var httpClient = new HttpClient(handler);
+            httpClient.BaseAddress = _printerUri;
+            _ippClient = new SharpIppClient(httpClient);
         }
 
-        public IPPClient(Uri printerUri, string requestingUserName)
+        public IPPClient(Uri printerUri)
         {
             _printerUri = printerUri;
-            _ippClient = new SharpIppClient();
-            _requestingUserName = requestingUserName;
+
+            var handler = new HttpClientHandler
+            {
+                SslProtocols = System.Security.Authentication.SslProtocols.Tls13, 
+                ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true,
+            };
+
+            var httpClient = new HttpClient(handler);
+            httpClient.BaseAddress = _printerUri;
+            _ippClient = new SharpIppClient(httpClient);
         }
 
         public async Task<GetPrinterAttributesResponse> GetPrinterAttributesAsync(CancellationToken cancellationToken = default)
@@ -36,72 +56,27 @@ namespace PrintWizard.Processes.IPP
             var request = new GetPrinterAttributesRequest
             {
                 PrinterUri = _printerUri,
-                Version = IppVersion.V11,
-                RequestedAttributes = null
             };
-            try
-            {
-                return await _ippClient.GetPrinterAttributesAsync(request, cancellationToken);
-            }
-            catch (IppResponseException ex)
-            {
-                Console.WriteLine($"Error parsing IPP response: {ex.Message}");
-                // Handle the exception or rethrow it if necessary
-                throw;
-            }
+            return await _ippClient.GetPrinterAttributesAsync(request, cancellationToken);
         }
 
-        public async Task<PrintJobResponse> PrintDocumentAsync(string documentPath, CancellationToken cancellationToken = default)
+        public async Task<PrintJobResponse> PrintDocumentAsync(string documentPath, string userName, CancellationToken cancellationToken = default)
         {
-            using var stream = File.OpenRead(documentPath);
+            var stream = File.OpenRead(documentPath);
             var request = new PrintJobRequest
             {
                 PrinterUri = _printerUri,
                 Document = stream,
                 NewJobAttributes = new NewJobAttributes
                 {
-                    JobName = "Print Job",
+                    JobName = $"Print Job by {Path.GetFileName(documentPath)}",
                     Copies = 1,
                     Sides = Sides.OneSided,
-                    OrientationRequested = Orientation.Portrait,
                     PrintQuality = PrintQuality.Normal,
-                    AdditionalJobAttributes = new List<IppAttribute>
+                    AdditionalOperationAttributes = new List<IppAttribute>
                     {
-                        //new(Tag.NameWithLanguage, "requesting-user-name", "Vladislav Gaydukevich"),
-                        //new(Tag.NameWithLanguage, "job-originating-user-name", "Vladislav Gaydukevich"),
-                        //new(Tag.OctetStringUnassigned38, "job-password", "1234")
-                    },
-                },
-                DocumentAttributes = new DocumentAttributes
-                {
-                    DocumentName = Path.GetFileName(documentPath),
-                    DocumentFormat = "application/octet-stream",
-                    DocumentNaturalLanguage = "en-us"
-                }
-            };
-
-            return await _ippClient.PrintJobAsync(request, cancellationToken);
-        }
-
-        public async Task<PrintJobResponse> PrintSecureDocumentAsync(string documentPath, string pinCode, CancellationToken cancellationToken = default)
-        {
-            using var stream = File.OpenRead(documentPath);
-            var request = new PrintJobRequest
-            {
-                PrinterUri = _printerUri,
-                Document = stream,
-                RequestingUserName = _requestingUserName,
-                NewJobAttributes = new NewJobAttributes
-                {
-                    JobName = "Secure Print Job",
-                    Copies = 1,
-                    Sides = Sides.OneSided,
-                    OrientationRequested = Orientation.Portrait,
-                    PrintQuality = PrintQuality.Normal,
-                    JobHoldUntil = JobHoldUntil.Indefinite,
-                    AdditionalJobAttributes = new[]
-                    {
-                        new IppAttribute(Tag.NameWithoutLanguage, "job-hold-until-name", pinCode)
+                        new(Tag.NameWithoutLanguage, "requesting-user-name", userName),
+                        new(Tag.Keyword, "job-password-encryption", "none"),
                     }
                 },
                 DocumentAttributes = new DocumentAttributes
@@ -112,7 +87,43 @@ namespace PrintWizard.Processes.IPP
                 }
             };
 
-            return await _ippClient.PrintJobAsync(request, cancellationToken);
+            var result = await _ippClient.PrintJobAsync(request, cancellationToken);
+            stream.Dispose();
+            return result;
+        }
+
+        public async Task<PrintJobResponse> PrintSecureDocumentAsync(string documentPath, string userName, string pinCode, CancellationToken cancellationToken = default)
+        {
+            var stream = File.OpenRead(documentPath);
+            var request = new PrintJobRequest
+            {
+                PrinterUri = _printerUri,
+                Document = stream,
+                RequestingUserName = _requestingUserName,
+                NewJobAttributes = new NewJobAttributes
+                {
+                    JobName = $"Secure Print {Path.GetFileName(documentPath)}",
+                    Sides = Sides.OneSided,
+                    PrintQuality = PrintQuality.Normal,
+                    JobHoldUntil = JobHoldUntil.Indefinite,
+                    AdditionalOperationAttributes = new List<IppAttribute>
+                    {
+                        new(Tag.NameWithoutLanguage, "requesting-user-name", userName),
+                        new(Tag.Keyword, "job-password-encryption", "none"),
+                        new(Tag.OctetStringWithAnUnspecifiedFormat, "job-password", pinCode)
+                    }
+                },
+                DocumentAttributes = new DocumentAttributes
+                {
+                    DocumentName = Path.GetFileName(documentPath),
+                    DocumentFormat = "application/octet-stream",
+                    DocumentNaturalLanguage = "en"
+                }
+            };
+
+            var result = await _ippClient.PrintJobAsync(request, cancellationToken);
+            stream.Dispose();
+            return result;
         }
 
         public async Task<GetJobAttributesResponse> GetJobAttributesAsync(int jobId, CancellationToken cancellationToken = default)
@@ -120,8 +131,7 @@ namespace PrintWizard.Processes.IPP
             var request = new GetJobAttributesRequest
             {
                 PrinterUri = _printerUri,
-                JobId = jobId,
-                RequestingUserName = _requestingUserName
+                JobId = jobId
             };
             return await _ippClient.GetJobAttributesAsync(request, cancellationToken);
         }
@@ -131,10 +141,19 @@ namespace PrintWizard.Processes.IPP
             var request = new CancelJobRequest
             {
                 PrinterUri = _printerUri,
-                JobId = jobId,
-                RequestingUserName = _requestingUserName
+                JobId = jobId
             };
             return await _ippClient.CancelJobAsync(request, cancellationToken);
+        }
+
+
+        public async Task<GetJobsResponse> GetAllJobsAsync(CancellationToken cancellationToken = default)
+        {
+            var request = new GetJobsRequest
+            {
+
+            };
+            return await _ippClient.GetJobsAsync(request, cancellationToken);
         }
 
         public void Dispose()

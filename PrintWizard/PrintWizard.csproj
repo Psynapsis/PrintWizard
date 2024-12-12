@@ -21,7 +21,7 @@
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
-    <PackageReference Include="SharpIpp" Version="0.10.0" />
+    <PackageReference Include="SharpIppNext" Version="1.0.12" />
     <PackageReference Include="SnmpSharpNet" Version="0.9.6" />
   </ItemGroup>
 	

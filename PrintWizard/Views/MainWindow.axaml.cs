@@ -9,8 +9,4 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
     }
-
-    private void Binding(object? sender, FluentAvalonia.UI.Controls.NavigationViewSelectionChangedEventArgs e)
-    {
-    }
 }

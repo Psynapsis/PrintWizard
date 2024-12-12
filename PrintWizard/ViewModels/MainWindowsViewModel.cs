@@ -41,8 +41,8 @@ namespace PrintWizard.ViewModels
             var snmpViewModel = serviceProvider.GetRequiredService<SNMPViewModel>();
             var ippViewModel = serviceProvider.GetRequiredService<IPPViewModel>();
 
-            PanelItems.Add(new NavigatePanelItemBase { Name = "SNMP", Icon = Symbol.Play, Tag = "SNMP", ToolTip = "Polling the printer via SNMP flow", ViewUserControl = new SNMPView { DataContext = snmpViewModel } });
             PanelItems.Add(new NavigatePanelItemBase { Name = "IPP", Icon = Symbol.Print, Tag = "IPP", ToolTip = "Printing and polling via IPP protocol", ViewUserControl = new IPPView { DataContext = ippViewModel } });
+            PanelItems.Add(new NavigatePanelItemBase { Name = "SNMP", Icon = Symbol.Play, Tag = "SNMP", ToolTip = "Polling the printer via SNMP flow", ViewUserControl = new SNMPView { DataContext = snmpViewModel } });
             this.RaisePropertyChanged(nameof(PanelItems));
 
             CurrentPage = PanelItems.FirstOrDefault().ViewUserControl;
